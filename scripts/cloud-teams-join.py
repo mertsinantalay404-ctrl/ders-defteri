@@ -37,27 +37,57 @@ def meeting_join_url(url):
     return join
 
 
+def frames_of(page):
+    frames = []
+    for frame in page.frames:
+        if frame not in frames:
+            frames.append(frame)
+    return frames
+
+
 def click_first(page, names, timeout=8000):
-    for name in names:
-        loc = page.get_by_role("button", name=name)
-        try:
-            loc.first.wait_for(state="visible", timeout=timeout)
-            loc.first.click()
-            return True
-        except Exception:
-            continue
+    deadline = time.time() + timeout / 1000
+    patterns = [re.compile(rf"^{re.escape(name)}$", re.I) for name in names]
+    while time.time() < deadline:
+        for frame in frames_of(page):
+            for pattern in patterns:
+                for role in ("button", "link"):
+                    loc = frame.get_by_role(role, name=pattern)
+                    try:
+                        if loc.count() and loc.first.is_visible():
+                            loc.first.click(timeout=2500)
+                            return True
+                    except Exception:
+                        continue
+        time.sleep(0.2)
     return False
 
 
 def visible_button(page, names, timeout=1500):
-    for name in names:
-        loc = page.get_by_role("button", name=name)
+    deadline = time.time() + timeout / 1000
+    patterns = [re.compile(rf"^{re.escape(name)}$", re.I) for name in names]
+    while time.time() < deadline:
+        for frame in frames_of(page):
+            for pattern in patterns:
+                loc = frame.get_by_role("button", name=pattern)
+                try:
+                    if loc.count() and loc.first.is_visible():
+                        return True
+                except Exception:
+                    continue
+        time.sleep(0.2)
+    return False
+
+
+def locator_visible(page, selector):
+    for frame in frames_of(page):
+        loc = frame.locator(selector)
         try:
-            loc.first.wait_for(state="visible", timeout=timeout)
-            return True
+            if loc.count() and loc.first.is_visible():
+                return loc.first
         except Exception:
             continue
-    return False
+    return None
 
 
 def fill_first(page, selectors, value):
@@ -96,7 +126,11 @@ def join_url_for_today(now):
         3: os.environ.get("TEAMS_JOIN_FIZYO", "").strip(),
         4: os.environ.get("TEAMS_JOIN_ANATOMI", "").strip(),
     }
-    return meeting_join_url(by_day.get(now.weekday(), "") or os.environ.get("TEAMS_JOIN_URL", "").strip())
+    url = meeting_join_url(by_day.get(now.weekday(), "") or os.environ.get("TEAMS_JOIN_URL", "").strip())
+    if not url or "launchAgent=" in url:
+        return url
+    sep = "&" if "?" in url else "?"
+    return url + sep + "launchAgent=join_only"
 
 
 def wait_until(target):
@@ -108,41 +142,203 @@ def wait_until(target):
         time.sleep(0.05 if remaining < 2 else min(1.0, remaining))
 
 
-def login(page, user, password):
-    fill_first(
-        page,
-        [
-            'input[type="email"]',
-            'input[name="loginfmt"]',
-            'input[placeholder*="E-posta"]',
-            'input[placeholder*="email" i]',
-        ],
-        user,
-    )
-    click_first(page, ["İleri", "Next"])
-    time.sleep(2)
-    fill_first(
-        page,
-        [
-            'input[type="password"]',
-            'input[name="passwd"]',
-            'input[placeholder*="Parola"]',
-            'input[placeholder*="Password"]',
-        ],
-        password,
-    )
-    click_first(page, ["Oturum açın", "Sign in"])
-    time.sleep(3)
-    click_first(page, ["Evet", "Yes"], timeout=5000)
-    time.sleep(2)
-
-
 LEAVE_NAMES = ["Ayrıl", "Leave", "Hang up", "Çağrıyı sonlandır", "Leave call", "Leave meeting"]
-JOIN_NAMES = ["Katıl", "Şimdi katıl", "Join now", "Join", "Katılın"]
+JOIN_SELECTORS = [
+    "[data-tid='prejoin-join-button']",
+    "[data-tid='join-button']",
+    "[data-tid='calling-join-button']",
+]
+HANGUP_SELECTORS = [
+    "[data-tid='call-hangup']",
+    "[data-tid='hangup-button']",
+    "[data-tid='calling-hangup-button']",
+]
+CONTINUE_NAMES = [
+    "Tarayıcıda devam et",
+    "Web üzerinde katıl",
+    "Web'de katıl",
+    "Bunun yerine web uygulamasını kullan",
+    "Bunun yerine web’de katıl",
+    "Continue on this browser",
+    "Join on the web instead",
+    "Use the web app instead",
+]
+AUDIO_NAMES = [
+    "Ses kullanma",
+    "Don't use audio",
+    "Bilgisayar sesi",
+    "Computer audio",
+]
+JOIN_NAMES = [
+    "Şimdi katıl",
+    "Toplantıya katıl",
+    "Ses kapalı olarak katıl",
+    "Katılma isteği gönder",
+    "Katıl",
+    "Join now",
+    "Join meeting",
+    "Ask to join",
+]
+
+
+def page_hint(page):
+    parsed = urlparse(page.url)
+    where = f"{parsed.netloc}{parsed.path}"[:160]
+    labels = []
+    for frame in frames_of(page)[:6]:
+        try:
+            found = frame.locator("button, a, [role='button']").evaluate_all(
+                """els => els
+                    .map(el => (el.innerText || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim())
+                    .filter(text => text && text.length < 60)
+                    .slice(0, 12)"""
+            )
+        except Exception:
+            continue
+        for label in found or []:
+            if "@" in label or label in labels:
+                continue
+            labels.append(label)
+            if len(labels) >= 12:
+                return where, labels
+    return where, labels
+
+
+def field_visible(page, selectors):
+    for selector in selectors:
+        if locator_visible(page, selector):
+            return True
+    return False
+
+
+def mfa_wall(page):
+    if "login.microsoftonline.com" not in page.url and "login.live.com" not in page.url:
+        return False
+    try:
+        text = page.inner_text("body")
+    except Exception:
+        return False
+    folded = text.lower()
+    return any(
+        token in folded
+        for token in ("authenticator", "onaylayın", "doğrulama kodu", "approve a request")
+    )
+
+
+def advance(page, user, password, done):
+    if mfa_wall(page):
+        log("mfa_required")
+        return "mfa"
+    if field_visible(
+        page,
+        [
+            'input[name="loginfmt"]',
+            'input[type="email"]',
+        ],
+    ):
+        filled = fill_first(
+            page,
+            ['input[name="loginfmt"]', 'input[type="email"]'],
+            user,
+        )
+        if filled:
+            click_first(page, ["İleri", "Next"], timeout=4000)
+            log("login_email")
+            return "email"
+    if click_first(
+        page,
+        ["Parolanızı kullanın", "Parola kullan", "Use your password"],
+        timeout=600,
+    ):
+        log("login_use_password")
+        return "password_choice"
+    if field_visible(page, ['input[name="passwd"]', 'input[type="password"]']):
+        filled = fill_first(
+            page,
+            ['input[name="passwd"]', 'input[type="password"]'],
+            password,
+        )
+        if filled:
+            click_first(page, ["Oturum açın", "Oturum aç", "Sign in"], timeout=4000)
+            log("login_password")
+            return "password"
+    if (
+        "stay" not in done
+        and "login.microsoftonline.com" in page.url
+        and click_first(page, ["Evet", "Yes"], timeout=500)
+    ):
+        done.add("stay")
+        log("login_stay")
+        return "stay"
+    web = locator_visible(page, "[data-tid='joinOnWeb'], #openTeamsClientInBrowser")
+    if web is not None:
+        try:
+            web.click(timeout=2500)
+            log("web_join")
+            return "web"
+        except Exception:
+            pass
+    if click_first(page, CONTINUE_NAMES, timeout=700):
+        log("web_join")
+        return "web"
+    if "audio" not in done and click_first(page, AUDIO_NAMES, timeout=400):
+        done.add("audio")
+        log("audio_selected")
+        return "audio"
+    if "camera" not in done and click_first(page, ["Kamerayı kapat", "Turn camera off"], timeout=300):
+        done.add("camera")
+        log("camera_off")
+        return "camera"
+    if "mic" not in done and click_first(page, ["Mikrofonu kapat", "Mute microphone"], timeout=300):
+        done.add("mic")
+        log("mic_off")
+        return "mic"
+    return "wait"
+
+
+def join_control(page):
+    for selector in JOIN_SELECTORS:
+        found = locator_visible(page, selector)
+        if found is not None:
+            return found
+    deadline = time.time() + 0.4
+    patterns = [re.compile(rf"^{re.escape(name)}$", re.I) for name in JOIN_NAMES]
+    for frame in frames_of(page):
+        for pattern in patterns:
+            loc = frame.get_by_role("button", name=pattern)
+            try:
+                if loc.count() and loc.first.is_visible():
+                    return loc.first
+            except Exception:
+                continue
+        if time.time() > deadline:
+            break
+    return None
+
+
+def click_join(page):
+    control = join_control(page)
+    if control is None:
+        return False
+    try:
+        if control.is_disabled():
+            now = time.time()
+            if now - getattr(click_join, "disabled_logged_at", 0) > 15:
+                log("join_button_disabled")
+                click_join.disabled_logged_at = now
+            return False
+        control.click(timeout=3000)
+        return True
+    except Exception as error:
+        log(f"join_click_error {type(error).__name__}")
+        return False
 
 
 def in_meeting(page):
-    return visible_button(page, LEAVE_NAMES, timeout=1200)
+    for selector in HANGUP_SELECTORS:
+        if locator_visible(page, selector) is not None:
+            return True
+    return visible_button(page, LEAVE_NAMES, timeout=400)
 
 
 def confirm_joined(page, timeout=45):
@@ -186,6 +382,15 @@ def participant_count(page):
 
 
 def leave_meeting(page):
+    for selector in HANGUP_SELECTORS:
+        found = locator_visible(page, selector)
+        if found is None:
+            continue
+        try:
+            found.click(timeout=3000)
+            return True
+        except Exception:
+            continue
     return click_first(page, LEAVE_NAMES, timeout=8000)
 
 
@@ -241,6 +446,10 @@ def main():
     if now > end:
         log("too_late class_already_ended")
         return
+    if now > start + datetime.timedelta(minutes=3):
+        late = (now - start).total_seconds()
+        log(f"too_late skip_join offset_s={late:.0f}")
+        return
 
     from playwright.sync_api import sync_playwright
 
@@ -252,30 +461,68 @@ def main():
             wait_until(login_at)
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
-        context = browser.new_context()
+        browser = playwright.chromium.launch(
+            headless=True,
+            args=[
+                "--use-fake-ui-for-media-stream",
+                "--use-fake-device-for-media-stream",
+                "--disable-blink-features=AutomationControlled",
+            ],
+        )
+        context = browser.new_context(
+            locale="tr-TR",
+            viewport={"width": 1366, "height": 768},
+            permissions=["microphone", "camera"],
+        )
         page = context.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=120000)
-        time.sleep(2)
-        login(page, user, password)
-        log("login_attempted")
-
+        done = set()
+        ready_logged = False
         if wait_for_start:
-            remaining = (start - datetime.datetime.now(TZ)).total_seconds()
-            if remaining > 0:
-                log(f"waiting_for_start remaining_s={remaining:.3f}")
-                wait_until(start)
-            else:
-                log(f"late_start offset_s={-remaining:.3f}")
+            while datetime.datetime.now(TZ) < start:
+                if join_control(page) is not None:
+                    if not ready_logged:
+                        log("prejoin_ready")
+                        ready_logged = True
+                else:
+                    state = advance(page, user, password, done)
+                    if state == "mfa":
+                        context.close()
+                        browser.close()
+                        sys.exit(1)
+                remaining = (start - datetime.datetime.now(TZ)).total_seconds()
+                if remaining <= 0:
+                    break
+                time.sleep(0.25 if remaining < 3 else min(1.0, remaining))
+        else:
+            advance(page, user, password, done)
 
-        click_at = datetime.datetime.now(TZ)
-        offset = (click_at - start).total_seconds()
-        log(f"join_click_at={click_at.isoformat(timespec='milliseconds')} offset_s={offset:.3f}")
-        click_first(page, JOIN_NAMES, timeout=15000)
-        joined = confirm_joined(page)
+        joined = in_meeting(page)
+        clicked = False
+        join_deadline = max(start, datetime.datetime.now(TZ)) + datetime.timedelta(seconds=90)
+        while not joined and datetime.datetime.now(TZ) < join_deadline:
+            if click_join(page):
+                click_at = datetime.datetime.now(TZ)
+                offset = (click_at - start).total_seconds()
+                log(f"join_click_at={click_at.isoformat(timespec='milliseconds')} offset_s={offset:.3f}")
+                clicked = True
+                joined = confirm_joined(page, timeout=20)
+                if joined:
+                    break
+            state = advance(page, user, password, done)
+            if state == "mfa":
+                context.close()
+                browser.close()
+                sys.exit(1)
+            if in_meeting(page):
+                joined = True
+                break
+            time.sleep(0.4)
+
         log(f"joined={joined}")
         if not joined:
-            log("join_not_confirmed skip_leave_watch")
+            where, labels = page_hint(page)
+            log(f"join_not_confirmed skip_leave_watch clicked={clicked} page={where} controls={labels}")
             context.close()
             browser.close()
             sys.exit(1)

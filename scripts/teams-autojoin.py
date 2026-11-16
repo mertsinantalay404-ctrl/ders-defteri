@@ -2,6 +2,7 @@
 """Join saved Teams classes on this Mac without opening Mert Ajanda."""
 
 import datetime
+import fcntl
 import json
 import os
 import pathlib
@@ -82,15 +83,35 @@ def mark_joined(key):
         handle.write(key + "\n")
 
 
+def claim(key):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    lock_path = STATE_DIR / "teams-join.lock"
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        if already_joined(key):
+            return False
+        mark_joined(key)
+        return True
+
+
 def click_join():
     script = r"""
 tell application "Microsoft Teams" to activate
-delay 3
+delay 2
 tell application "System Events"
   if not (exists process "Microsoft Teams") then return
   tell process "Microsoft Teams"
     set frontmost to true
     delay 0.4
+    set wanted to {"Şimdi katıl", "Toplantıya katıl", "Katıl", "Join now", "Join"}
+    repeat with buttonName in wanted
+      try
+        if exists (button buttonName of window 1) then
+          click button buttonName of window 1
+          return
+        end if
+      end try
+    end repeat
     keystroke return
   end tell
 end tell
@@ -149,16 +170,15 @@ def main():
         hour, minute = str(item.get("start") or "00:00").split(":")[:2]
         start_at = now.replace(hour=int(hour), minute=int(minute), second=0, microsecond=0)
         offset = (now - start_at).total_seconds()
-        if offset < -55 or offset > 45:
+        if offset < -360 or offset > 120:
+            continue
+        key = f"{today}:{item.get('title')}:{item.get('start')}"
+        if not claim(key):
             continue
         if offset < 0:
             time.sleep(-offset)
             now = datetime.datetime.now()
             offset = (now - start_at).total_seconds()
-        key = f"{today}:{item.get('title')}:{item.get('start')}"
-        if already_joined(key):
-            continue
-        mark_joined(key)
         print(
             f"{now.isoformat(timespec='seconds')} join_click_at offset_s={offset:.3f} {item.get('title')}",
             flush=True,

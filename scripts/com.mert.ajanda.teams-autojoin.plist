@@ -13,6 +13,33 @@
   <string>/Users/mert/Projects/ders-defteri</string>
   <key>StartInterval</key>
   <integer>5</integer>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict>
+      <key>Weekday</key>
+      <integer>1</integer>
+      <key>Hour</key>
+      <integer>17</integer>
+      <key>Minute</key>
+      <integer>54</integer>
+    </dict>
+    <dict>
+      <key>Weekday</key>
+      <integer>4</integer>
+      <key>Hour</key>
+      <integer>17</integer>
+      <key>Minute</key>
+      <integer>54</integer>
+    </dict>
+    <dict>
+      <key>Weekday</key>
+      <integer>5</integer>
+      <key>Hour</key>
+      <integer>17</integer>
+      <key>Minute</key>
+      <integer>54</integer>
+    </dict>
+  </array>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
