@@ -854,7 +854,7 @@ const App = (() => {
       <section class="card form-card live-card">
         <div>
           <strong class="panel-title">Canlı dersler</strong>
-          <p class="meta">Katılınca tarayıcıda misafir açılmaz; telefonda/bilgisayarda senin Teams uygulaman açılır. Yoklama için Teams’te 26121188@eul.edu.tr hesabın açık kalsın.</p>
+          <p class="meta">Ders saatinde senin Teams hesabınla otomatik katılınır. Bilgisayarda Teams’i açmana gerek yok.</p>
         </div>
         <div class="live-today" id="live-today"></div>
         <details class="live-add">
