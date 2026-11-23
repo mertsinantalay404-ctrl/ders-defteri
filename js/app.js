@@ -220,7 +220,7 @@ const App = (() => {
     return `${d.getDate()} ${MONTHS_TR[d.getMonth()]} ${d.getFullYear()}`;
   }
 
-  const GH_REPO = "Cmdr-MertSinan/ders-defteri";
+  const GH_REPO = "mertsinantalay404-ctrl/ders-defteri";
   const CLOUD_NOTES_PATH = "data/user-state.json";
   const NOTES_SYNC_TOPIC = "neoclass-2ea2b0e3de749c573fd60ad016c8061f";
   let cloudSha = "";
