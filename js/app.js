@@ -118,14 +118,19 @@ const App = (() => {
   async function importMoodlePack() {
     if (location.protocol === "file:") return;
     const existingNames = new Set((await DB.all("files")).map((item) => item.name));
+    const showHome = async () => {
+      if (route.name === "home") await renderHome();
+    };
     try {
-      const res = await fetch("moodle-slides/manifest.json?v=20");
+      state.sync = "Moodle slaytları yükleniyor…";
+      await showHome();
+      const res = await fetch("moodle-slides/manifest.json?v=21");
       if (!res.ok) return;
       const pack = await res.json();
       for (const courseInfo of pack.courses) {
         for (const item of courseInfo.files) {
           if (existingNames.has(item.file)) continue;
-          const fileRes = await fetch(`moodle-slides/${encodeURIComponent(item.file)}?v=20`);
+          const fileRes = await fetch(`moodle-slides/${encodeURIComponent(item.file)}?v=21`);
           if (!fileRes.ok) continue;
           const blob = await fileRes.blob();
           const isPptx = item.file.toLowerCase().endsWith(".pptx");
@@ -139,9 +144,13 @@ const App = (() => {
           );
           existingNames.add(item.file);
         }
+        await showHome();
       }
     } catch (error) {
       console.warn("Moodle paketi yüklenemedi", error);
+    } finally {
+      state.sync = "";
+      await showHome();
     }
   }
 
